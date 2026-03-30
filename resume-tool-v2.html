@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <meta charset="UTF-8" />
+  <title>Resume Optimizer</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 {
+      text-align: center;
+    }
+    .container {
+      max-width: 900px;
+      margin: auto;
+    }
+    textarea {
+      width: 100%;
+      height: 150px;
+      margin-bottom: 15px;
+      padding: 10px;
+      background: #1e293b;
+      color: white;
+      border: none;
+      border-radius: 8px;
+    }
+    button {
+      width: 100%;
+      padding: 15px;
+      background: #22c55e;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #16a34a;
+    }
+    #output {
+      margin-top: 20px;
+      white-space: normal;
+      background: #020617;
+      padding: 15px;
+      border-radius: 8px;
+      min-height: 150px;
+    }
+    .resume h2 {
+      margin-bottom: 2px;
+    }
+    .resume p {
+      margin: 2px 0 10px;
+    }
+    .resume strong {
+      font-weight: bold;
+    }
+    .resume {
+      background: white;
+      color: black;
+      padding: 30px;
+      border-radius: 8px;
+    }
+    .job {
+      margin-bottom: 15px;
+    }
+
+@media print {
+  body {
+    background: white;
+  }
+
+  .container {
+    box-shadow: none;
+    padding: 0;
+  }
+
+  button, textarea {
+    display: none !important;
+  }
+
+  .resume {
+    width: 100%;
+    max-width: 800px;
+    margin: auto;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Resume Optimizer</h1>
+
+    <textarea id="job" placeholder="Paste Job Description..."></textarea>
+    <textarea id="resume" placeholder="Paste Your Resume..."></textarea>
+
+    <button onclick="optimize()">Optimize Resume</button>
+
+    <div id="output">Your optimized resume will appear here...</div>
+    <button onclick="copyFormatted()">Copy Resume</button>
+    <button onclick="downloadPDF()">Download PDF</button>
+  </div>
+
+ <script>
+async function optimize() {
+  const job = document.getElementById("job").value;
+  const resume = document.getElementById("resume").value;
+  const output = document.getElementById("output");
+
+  output.innerHTML = `
+  <div style="text-align:center; padding:20px;">
+    <div style="
+      width:40px;
+      height:40px;
+      border:5px solid #ccc;
+      border-top:5px solid #22c55e;
+      border-radius:50%;
+      animation: spin 1s linear infinite;
+      margin:auto;
+    "></div>
+    <p>Optimizing your resume...</p>
+  </div>
+`;
+const prompt = `
+You are an expert resume writer.
+
+CRITICAL RULES:
+- Output ONLY valid JSON
+- DO NOT include any text outside JSON
+- DO NOT include trailing commas
+- DO NOT include comments
+- DO NOT include markdown (no backtick code blocks)
+- Ensure ALL strings are properly quoted
+- Ensure JSON is fully valid and parsable
+
+If the JSON is invalid, the output is considered a failure.
+
+--- JOB DESCRIPTION ---
+${job}
+
+--- ORIGINAL RESUME ---
+${resume}
+
+FORMAT:
+{
+  "name": "",
+  "contact": {
+    "phone": "",
+    "email": "",
+    "location": ""
+  },
+  "summary": "",
+  "skills": [],
+  "experience": [
+    {
+      "title": "",
+      "company": "",
+      "dates": "",
+      "bullets": []
+    }
+  ],
+  "education": "",
+  "certifications": []
+}
+`;
+  let parsed;
+
+try {
+  parsed = await callAI(prompt);
+} catch (err) {
+  console.error(err);
+  output.innerText = "AI failed after retries.";
+  return;
+}
+
+output.innerHTML = renderResume(parsed);
+}
+
+  // ✅ PARSE
+async function callAI(prompt, retries = 2) {
+  try {
+    const response = await fetch("http://192.168.1.89:11434/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "phi3",
+        prompt: prompt,
+        stream: false,
+        options: {
+          num_predict: 1500,
+          temperature: 0.2
+        }
+      })
+    });
+
+    const data = await response.json();
+    const raw = data.response;
+
+    const cleaned = extractJSON(raw);
+    if (!cleaned) throw new Error("No JSON found");
+
+    try {
+  try {
+  return JSON.parse(cleaned);
+} catch (e) {
+  console.error("RAW AI OUTPUT:", cleaned);
+
+  let fixed = cleaned
+    .replace(/,\s*}/g, "}")   // trailing commas (objects)
+    .replace(/,\s*]/g, "]")   // trailing commas (arrays)
+    .replace(/[\u2013\u2014]/g, "-") // weird dashes
+    .replace(/(\d)(st|nd|rd|th)/g, "$1"); // remove "2nd", "3rd" etc
+
+  try {
+    return JSON.parse(fixed);
+  } catch (e2) {
+    console.error("STILL BROKEN JSON:", fixed);
+    throw new Error("Invalid JSON from AI");
+  }
+}
+} catch (e) {
+  console.error("PARSE ERROR:", cleaned);
+  throw new Error("Invalid JSON from AI");
+}
+
+  } catch (err) {
+    console.warn("Retrying AI...", err);
+
+    if (retries > 0) {
+      return callAI(prompt, retries - 1);
+    }
+
+    throw err;
+  }
+}
+
+function extractJSON(text) {
+  if (!text) return null;
+
+  // Remove markdown code blocks if present
+  text = text.replace(/```json/g, "").replace(/```/g, "").trim();
+
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+
+  if (start === -1 || end === -1) return null;
+
+  return text.substring(start, end + 1);
+}
+
+function renderResume(r) {
+  if (!r) return "<p>No data</p>";
+
+  // Normalize data
+  const contact = typeof r.contact === "object"
+    ? `${r.contact.phone || ""} | ${r.contact.email || ""} | ${r.contact.location || ""}`
+    : (r.contact || "");
+
+  const experience = Array.isArray(r.experience) ? r.experience : [];
+  const skills = Array.isArray(r.skills) ? r.skills : [];
+  const certs = Array.isArray(r.certifications) ? r.certifications : [];
+
+  return `
+    <div class="resume">
+
+      <h1>${r.name || "Your Name"}</h1>
+      <p>${contact}</p>
+
+      <hr style="margin:20px 0;">
+
+      ${r.summary ? `
+        <h3>Professional Summary</h3>
+        <p>${r.summary}</p>
+      ` : ""}
+
+      ${skills.length ? `
+        <h3>Core Skills</h3>
+        <p>${skills.join(" • ")}</p>
+      ` : ""}
+
+      ${experience.length ? `
+        <h3>Professional Experience</h3>
+        ${experience.map(job => `
+          <div class="job" style="margin-bottom:14px;">
+            <strong>
+              ${(job.title || job.position || "Role")}
+              ${job.company || job.organization ? ` - ${job.company || job.organization}` : ""}
+            </strong><br>
+
+            ${job.dates || job.startDate ? `
+              <em>${job.dates || job.startDate}</em>
+            ` : ""}
+
+            ${job.bullets || job.responsibilities ? `
+              <ul>
+                ${(job.bullets || job.responsibilities || [])
+                  .map(b => `<li>${b}</li>`).join("")}
+              </ul>
+            ` : ""}
+          </div>
+        `).join("")}
+      ` : ""}
+
+      ${r.education ? `
+        <h3>Education</h3>
+        <p>${r.education}</p>
+      ` : ""}
+
+      ${certs.length ? `
+        <h3>Certifications</h3>
+        <ul>
+          ${certs.map(c => `<li>${c.name || c}</li>`).join("")}
+        </ul>
+      ` : ""}
+
+    </div>
+  `;
+}
+
+async function copyFormatted() {
+  const resumeEl = document.querySelector(".resume");
+
+  if (!resumeEl) {
+    alert("No resume to copy yet.");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "text/html": new Blob([resumeEl.innerHTML], { type: "text/html" }),
+        "text/plain": new Blob([resumeEl.innerText], { type: "text/plain" })
+      })
+    ]);
+
+    alert("Formatted resume copied!");
+  } catch (err) {
+    console.error(err);
+    alert("Copy failed.");
+  }
+}
+
+function downloadPDF() {
+  window.print();
+}
+</script>
+</body>
+</html>
