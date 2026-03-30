@@ -202,35 +202,38 @@ async function callAI(prompt, retries = 2) {
       })
     });
 
-    const data = await response.json();
-    const raw = data.response;
+    const text = await response.text();
+
+    let raw;
+
+    try {
+      const parsed = JSON.parse(text);
+      raw = parsed.response || text;
+    } catch {
+      raw = text;
+    }
 
     const cleaned = extractJSON(raw);
     if (!cleaned) throw new Error("No JSON found");
 
     try {
-  try {
-  return JSON.parse(cleaned);
-} catch (e) {
-  console.error("RAW AI OUTPUT:", cleaned);
+      return JSON.parse(cleaned);
+    } catch (e) {
+      console.error("RAW AI OUTPUT:", cleaned);
 
-  let fixed = cleaned
-    .replace(/,\s*}/g, "}")   // trailing commas (objects)
-    .replace(/,\s*]/g, "]")   // trailing commas (arrays)
-    .replace(/[\u2013\u2014]/g, "-") // weird dashes
-    .replace(/(\d)(st|nd|rd|th)/g, "$1"); // remove "2nd", "3rd" etc
+      let fixed = cleaned
+        .replace(/,\s*}/g, "}")
+        .replace(/,\s*]/g, "]")
+        .replace(/[\u2013\u2014]/g, "-")
+        .replace(/(\d)(st|nd|rd|th)/g, "$1");
 
-  try {
-    return JSON.parse(fixed);
-  } catch (e2) {
-    console.error("STILL BROKEN JSON:", fixed);
-    throw new Error("Invalid JSON from AI");
-  }
-}
-} catch (e) {
-  console.error("PARSE ERROR:", cleaned);
-  throw new Error("Invalid JSON from AI");
-}
+      try {
+        return JSON.parse(fixed);
+      } catch (e2) {
+        console.error("STILL BROKEN JSON:", fixed);
+        throw new Error("Invalid JSON from AI");
+      }
+    }
 
   } catch (err) {
     console.warn("Retrying AI...", err);
